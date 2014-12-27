@@ -6,4 +6,5 @@ Nova Poshta Gateway for OpenCart
 Tested at OpenCart 1.5.4
 Worked with NovaPoshta API v.1
 
-Community Support
+Community Support:
+http://opencart-ukraine.tumblr.com/post/106332312161/nova-poshta-shipping-module-free-download
