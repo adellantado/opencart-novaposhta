@@ -26,5 +26,6 @@
  */
 
 // Text
-$_['text_title']       = 'Новая Почта';
-$_['text_novaposhta_store'] = 'Новой Почтой до склада';
+$_['text_title']                = 'Новая Почта';
+$_['text_novaposhta_warehouse'] = 'Новой Почтой до склада';
+$_['text_novaposhta_express']   = 'Новой Почтой до двери';
