@@ -77,8 +77,21 @@ class ModelShippingNovaPoshta extends Model {
                         'code'         => 'novaposhta.warehouse',
                         'title'        => $this->language->get('text_novaposhta_warehouse'),
                         'cost'         => $warehouse_response->cost,
-                        'tax_class_id' => $this->config->get('novaposhta_tax_class_id'),
+                        'tax_class_id' => 0,
                         'text'         => $this->currency->format($warehouse_response->cost)
+                    );
+                }
+
+                // Get Express Quote
+                $express_response = $this->_getQuote($address['city'], 3, 1, 1, 0);
+
+                if ($express_response) {
+                    $quote_data['express'] = array(
+                        'code'         => 'novaposhta.express',
+                        'title'        => $this->language->get('text_novaposhta_express'),
+                        'cost'         => $express_response->cost,
+                        'tax_class_id' => 0,
+                        'text'         => $this->currency->format($express_response->cost)
                     );
                 }
 
