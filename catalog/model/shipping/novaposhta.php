@@ -1,54 +1,15 @@
 <?php
-
-/**
- * OpenCart Ukrainian Community
- * Made in Ukraine
- *
- * LICENSE
- *
- * This source file is subject to the GNU General Public License, Version 3
- * It is also available through the world-wide-web at this URL:
- * http://www.gnu.org/copyleft/gpl.html
- * If you did not receive a copy of the license and are unable to
- * obtain it through the world-wide-web, please send an email
- *
- * @category   OpenCart
- * @package    OCU Nova Poshta
- * @copyright  Copyright (c) 2011 Eugene Lifescale (a.k.a. Shaman) by OpenCart Ukrainian Community (http://opencart-ukraine.tumblr.com)
- * @license    http://www.gnu.org/copyleft/gpl.html     GNU General Public License, Version 3
- * @version    $Id: catalog/model/shipping/ocu_ukrposhta.php 1.2 2014-12-27 19:18:40
- */
 /**
  * @category   OpenCart
  * @package    OCU OCU Nova Poshta
- * @copyright  Copyright (c) 2011 Eugene Lifescale (a.k.a. Shaman) by OpenCart Ukrainian Community (http://opencart-ukraine.tumblr.com)
+ * @copyright  Copyright (c) 2011 Eugene Lifescale (a.k.a. Shaman)
+ * @modify     Upgrade up to OpenCart 2.0.x with NovaPoshta API v2.0 by Alex Tymchenko
  * @license    http://www.gnu.org/copyleft/gpl.html     GNU General Public License, Version 3
  */
 
 class ModelShippingNovaPoshta extends Model {
 
-    private $_weight = 0.1;
-    private $_width  = 1;
-    private $_height = 1;
-    private $_length = 1;
-    private $_total  = 1;
-
     function getQuote($address) {
-
-        if ($this->cart->hasProducts()) {
-
-            $this->_total = $this->cart->getTotal();
-
-            foreach ($this->cart->getProducts() as $product) {
-                if ($product['shipping']) {
-                    $this->_weight += $this->weight->convert($product['weight'], $product['weight_class_id'], $this->config->get('config_weight_class_id'));
-                    $this->_height += $product['height'];
-                    $this->_width  += $product['width'];
-                    $this->_height += $product['height'];
-                    $this->_length += $product['length'];
-                }
-            }
-        }
 
         $this->load->language('shipping/novaposhta');
 
@@ -62,37 +23,85 @@ class ModelShippingNovaPoshta extends Model {
             $status = false;
         }
 
+        $city_ref = '';
+
         $method_data = array();
 
-        if ($status) {
-            if ($this->config->get('novaposhta_api_key') && $this->config->get('novaposhta_sender_city') && isset($address['city']) && !empty($address['city'])) {
+        if ($status && isset($address['city']) && !empty($address['city'])) {
+            $city_response = $this->getResponse(
+                $this->getRequest('Address', 'getCities', array('FindByString' => $address['city']))
+            );
+
+            if ($city_response['success'] && $city_response['data'] && count($city_response['data']) < 5) {
+
+                $city_lower_case = mb_convert_case($address['city'], MB_CASE_LOWER);
+                foreach ($city_response['data'] as $item) {
+                    if ($city_lower_case == mb_convert_case($item['Description'], MB_CASE_LOWER) || $city_lower_case == mb_convert_case($item['DescriptionRu'], MB_CASE_LOWER) ) {
+                        $city_ref = (string)$item['Ref'];
+                        $status = true;
+                        break;
+                    }
+                }
+            }
+
+            if (empty($city_ref)) {
+                $method_data = array(
+                    'code'       => 'novaposhta',
+                    'title'      => $this->language->get('text_title'),
+                    'quote'      => null,
+                    'sort_order' => $this->config->get('novaposhta_sort_order'),
+                    'error'      => sprintf($this->language->get('text_city_error'), $this->url->link('information/contact'))
+                );
+                $status = false;
+            }
+
+
+        }
+
+        if ($status && $city_ref) {
+            if ($this->config->get('novaposhta_api_key') && $this->config->get('novaposhta_sender_city_ref') && $this->config->get('novaposhta_weight_class_id')) {
 
                 $quote_data = array();
 
-                // Get Warehouse Quote
-                $warehouse_response = $this->_getQuote($address['city'], 4, 1, 1, 0);
+                $is_free_shipping = (float)$this->cart->getTotal() >= (float)$this->config->get('novaposhta_free_total');
 
-                if ($warehouse_response) {
+                if ($is_free_shipping) {
+
                     $quote_data['warehouse'] = array(
                         'code'         => 'novaposhta.warehouse',
-                        'title'        => $this->language->get('text_novaposhta_warehouse'),
-                        'cost'         => $warehouse_response->cost,
+                        'title'        => $this->language->get('text_novaposhta_free'),
+                        'cost'         => 0,
                         'tax_class_id' => 0,
-                        'text'         => $this->currency->format($warehouse_response->cost)
+                        'text'         => $this->currency->format(0)
                     );
-                }
 
-                // Get Express Quote
-                $express_response = $this->_getQuote($address['city'], 3, 1, 1, 0);
+                } else {
 
-                if ($express_response) {
-                    $quote_data['express'] = array(
-                        'code'         => 'novaposhta.express',
-                        'title'        => $this->language->get('text_novaposhta_express'),
-                        'cost'         => $express_response->cost,
-                        'tax_class_id' => 0,
-                        'text'         => $this->currency->format($express_response->cost)
-                    );
+                    // Get Warehouse Quote
+                    $warehouse_response = $this->getDeliveryPrice($city_ref, "WarehouseWarehouse");
+
+                    if ($warehouse_response) {
+                        $quote_data['warehouse'] = array(
+                            'code'         => 'novaposhta.warehouse',
+                            'title'        => $this->language->get('text_novaposhta_warehouse'),
+                            'cost'         => $warehouse_response,
+                            'tax_class_id' => 0,
+                            'text'         => $this->currency->format($warehouse_response)
+                        );
+                    }
+
+                    // Get Express Quote
+                    $express_response = $this->getDeliveryPrice($city_ref, "WarehouseDoors");
+
+                    if ($express_response) {
+                        $quote_data['express'] = array(
+                            'code'         => 'novaposhta.express',
+                            'title'        => $this->language->get('text_novaposhta_express'),
+                            'cost'         => $express_response,
+                            'tax_class_id' => 0,
+                            'text'         => $this->currency->format($express_response)
+                        );
+                    }
                 }
 
                 if ($quote_data) {
@@ -110,46 +119,56 @@ class ModelShippingNovaPoshta extends Model {
         return $method_data;
     }
 
-    private function _getQuote($city, $delivery_type_id, $load_type_id, $floor_count, $postpay_sum) {
+    private function getDeliveryPrice($city_ref, $delivery_type) {
 
-        $xml  = '<?xml version="1.0" encoding="utf-8" ?>';
-        $xml .= '<file>';
-            $xml .= '<auth>' . $this->config->get('novaposhta_api_key') . '</auth>';
-            $xml .= '<countPrice>';
-                $xml .= '<senderCity>' . $this->config->get('novaposhta_sender_city') . '</senderCity>';
-                $xml .= '<recipientCity>' . trim($city) . '</recipientCity>';
-                $xml .= '<mass>' . $this->_weight . '</mass>';
-                $xml .= '<height>' . $this->_height . '</height>';
-                $xml .= '<width>' . $this->_width . '</width>';
-                $xml .= '<depth>' . $this->_height . '</depth>';
-                $xml .= '<publicPrice>' . $this->_total . '</publicPrice>';
-                $xml .= '<deliveryType_id>' . $delivery_type_id . '</deliveryType_id>';
-                $xml .= '<loadType_id>' . $load_type_id . '</loadType_id>';
-                $xml .= '<floor_count>' . $floor_count . '</floor_count>';
-                $xml .= '<postpay_sum>' . $postpay_sum . '</postpay_sum>';
-                $xml .= '<date>' . $this->_send . '</date>';
-            $xml .= '</countPrice>';
-        $xml .= '</file>';
+        $weight = (float)$this->cart->getWeight() > 100 ? (float)$this->cart->getWeight() : 100;
 
-        $ch = curl_init();
+        $response = $this->getResponse(
+            $this->getRequest('InternetDocument', 'getDocumentPrice', array(
+                "Weight" => (string)$this->weight->convert($weight, $this->config->get('config_weight_class_id'), $this->config->get('novaposhta_weight_class_id')),
+                "Cost" => $this->cart->getTotal(),
+                "ServiceType" => $delivery_type,
+                "CitySender" => $this->config->get('novaposhta_sender_city_ref'),
+                "CityRecipient" => $city_ref
+            ))
+        );
 
-        curl_setopt($ch, CURLOPT_URL, 'http://orders.novaposhta.ua/xml.php');
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
-        curl_setopt($ch, CURLOPT_HTTPHEADER, Array("Content-Type: text/xml"));
-        curl_setopt($ch, CURLOPT_HEADER, 0);
-        curl_setopt($ch, CURLOPT_POSTFIELDS, $xml);
-        curl_setopt($ch, CURLOPT_POST, 1);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, 0);
-
-        $response = curl_exec($ch);
-
-        curl_close($ch);
-
-        if ($response) {
-            return simplexml_load_string($response);
+        if ($response['success']) {
+            return count($response['data']) > 0 ? $response['data'][0]['Cost'] : false;
         } else {
             return false;
         }
+    }
+
+    private function getRequest($modelName, $calledMethod, $methodProperties) {
+        $request = array(
+            'modelName' => $modelName,
+            'calledMethod' => $calledMethod,
+            'methodProperties' => $methodProperties,
+            'apiKey' => $this->config->get('novaposhta_api_key')
+        );
+
+        return json_encode($request);
+    }
+
+    private function getResponse($request) {
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_URL, 'https://api.novaposhta.ua/v2.0/json/');
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, Array("Content-Type: application/json"));
+        curl_setopt($ch, CURLOPT_HEADER, 0);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, $request);
+        curl_setopt($ch, CURLOPT_POST, 1);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, 0);
+        $response = curl_exec($ch);
+        curl_close($ch);
+
+        $json = json_decode($response, true);
+        if ($json) {
+            return $json;
+        }
+
+        return $response;
     }
 }
 
